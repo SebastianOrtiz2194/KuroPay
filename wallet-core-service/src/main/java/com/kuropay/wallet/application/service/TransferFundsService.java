@@ -11,6 +11,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class TransferFundsService implements TransferFundsUseCase {
@@ -30,6 +31,7 @@ public class TransferFundsService implements TransferFundsUseCase {
     }
 
     @Override
+    @Transactional
     public TransferResult transfer(TransferCommand command) {
         UUID firstLockId = compareUnsigned(command.sourceWalletId(), command.targetWalletId()) < 0
                 ? command.sourceWalletId()
