@@ -1,5 +1,6 @@
 package com.kuropay.wallet.infrastructure.web;
 
+import com.kuropay.wallet.domain.exception.DuplicateIdempotencyKeyException;
 import com.kuropay.wallet.domain.exception.WalletNotFoundException;
 import com.kuropay.wallet.infrastructure.idempotency.IdempotencyConflictException;
 import java.net.URI;
@@ -25,6 +26,15 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
         problem.setTitle("Idempotency Conflict");
         problem.setType(URI.create("https://api.kuropay.com/errors/idempotency-conflict"));
+        problem.setProperty("idempotencyKey", ex.idempotencyKey());
+        return problem;
+    }
+
+    @ExceptionHandler(DuplicateIdempotencyKeyException.class)
+    public ProblemDetail handleDuplicateIdempotencyKey(DuplicateIdempotencyKeyException ex) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
+        problem.setTitle("Idempotency Key Already Used");
+        problem.setType(URI.create("https://api.kuropay.com/errors/idempotency-key-already-used"));
         problem.setProperty("idempotencyKey", ex.idempotencyKey());
         return problem;
     }
