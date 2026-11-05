@@ -107,6 +107,52 @@ class TransferConcurrencyIntegrationTest {
     }
 
     @Test
+    void concurrent_retries_with_the_same_idempotency_key_should_move_money_exactly_once() throws Exception {
+        Instant now = Instant.now();
+        Wallet source = Wallet.createNew("user-retry-source", Currency.JPY, now);
+        source.credit(Money.of(10_000L, Currency.JPY), now);
+        walletRepository.save(source);
+
+        Wallet target = Wallet.createNew("user-retry-target", Currency.JPY, now);
+        walletRepository.save(target);
+
+        // Simulates a client (or a load balancer) firing the same request 20 times at once,
+        // bypassing Redis entirely: only PostgreSQL protects us here.
+        int retries = 20;
+        CountDownLatch readyLatch = new CountDownLatch(retries);
+        CountDownLatch startGun = new CountDownLatch(1);
+        TransferCommand sameCommand = new TransferCommand(
+                source.id(), target.id(), Money.of(1_000L, Currency.JPY), "idem-same-key-retry"
+        );
+
+        List<Future<TransferResult>> futures = new ArrayList<>(retries);
+        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+            for (int i = 0; i < retries; i++) {
+                futures.add(executor.submit(() -> {
+                    readyLatch.countDown();
+                    startGun.await();
+                    return transferFundsUseCase.transfer(sameCommand);
+                }));
+            }
+            readyLatch.await();
+            startGun.countDown();
+        }
+
+        List<UUID> transferIds = new ArrayList<>();
+        for (Future<TransferResult> future : futures) {
+            assertThat(future.get()).isInstanceOf(TransferResult.Completed.class);
+            transferIds.add(((TransferResult.Completed) future.get()).transferId());
+        }
+
+        assertThat(transferIds).as("every retry must replay the same transfer").containsOnly(transferIds.getFirst());
+        assertThat(walletRepository.findById(source.id()).orElseThrow().balance())
+                .isEqualTo(Money.of(9_000L, Currency.JPY));
+        assertThat(walletRepository.findById(target.id()).orElseThrow().balance())
+                .isEqualTo(Money.of(1_000L, Currency.JPY));
+        assertThat(outboxRepository.findByStatusOrderByCreatedAtAsc("PENDING")).hasSize(1);
+    }
+
+    @Test
     void bidirectional_concurrent_transfers_should_complete_without_deadlock_and_conserve_total_money() throws Exception {
         Instant now = Instant.now();
         Wallet walletA = Wallet.createNew("user-a", Currency.JPY, now);

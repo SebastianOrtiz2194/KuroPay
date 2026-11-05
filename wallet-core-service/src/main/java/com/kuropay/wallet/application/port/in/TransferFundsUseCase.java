@@ -28,8 +28,16 @@ public interface TransferFundsUseCase {
             if (idempotencyKey == null || idempotencyKey.isBlank()) {
                 throw new IllegalArgumentException("idempotencyKey must not be blank");
             }
+            if (idempotencyKey.length() > MAX_IDEMPOTENCY_KEY_LENGTH) {
+                throw new IllegalArgumentException(
+                        "idempotencyKey must be at most %d characters".formatted(MAX_IDEMPOTENCY_KEY_LENGTH)
+                );
+            }
         }
     }
+
+    /** Matches the transfers.idempotency_key column size. */
+    int MAX_IDEMPOTENCY_KEY_LENGTH = 255;
 
     sealed interface TransferResult
             permits TransferResult.Completed, TransferResult.RejectedInsufficientFunds {

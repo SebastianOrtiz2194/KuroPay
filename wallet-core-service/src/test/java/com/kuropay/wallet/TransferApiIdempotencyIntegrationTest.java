@@ -13,6 +13,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
@@ -45,6 +47,9 @@ class TransferApiIdempotencyIntegrationTest {
 
     @Autowired
     private WalletRepositoryPort walletRepository;
+
+    @Autowired
+    private StringRedisTemplate redisTemplate;
 
     @Test
     void duplicate_requests_with_same_idempotency_key_should_only_debit_once_and_replay_cached_response() {
@@ -100,6 +105,61 @@ class TransferApiIdempotencyIntegrationTest {
 
         assertThat(updatedSource.balance()).isEqualTo(Money.of(7_500L, Currency.JPY));
         assertThat(updatedTarget.balance()).isEqualTo(Money.of(2_500L, Currency.JPY));
+    }
+
+    @Test
+    void retry_after_redis_lost_its_data_should_replay_from_postgres_and_not_debit_twice() {
+        Instant now = Instant.now();
+        Wallet source = Wallet.createNew("user-redis-loss-source", Currency.JPY, now);
+        source.credit(Money.of(10_000L, Currency.JPY), now);
+        walletRepository.save(source);
+
+        Wallet target = Wallet.createNew("user-redis-loss-target", Currency.JPY, now);
+        walletRepository.save(target);
+
+        RestClient restClient = RestClient.builder()
+                .baseUrl("http://localhost:" + port)
+                .build();
+
+        TransferRequest requestBody = new TransferRequest(
+                source.id(),
+                target.id(),
+                BigDecimal.valueOf(2_500L),
+                Currency.JPY
+        );
+        String idempotencyKey = "idem-redis-loss-001";
+
+        ResponseEntity<TransferResponse> firstCall = postTransfer(restClient, idempotencyKey, requestBody);
+
+        // Same effect as: Redis restarted without persistence, the cached response expired, or the
+        // service crashed between the DB commit and the Redis write.
+        redisTemplate.execute((RedisCallback<Object>) connection -> {
+            connection.serverCommands().flushAll();
+            return null;
+        });
+
+        ResponseEntity<TransferResponse> retry = postTransfer(restClient, idempotencyKey, requestBody);
+
+        assertThat(retry.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(retry.getBody()).isEqualTo(firstCall.getBody());
+
+        assertThat(walletRepository.findById(source.id()).orElseThrow().balance())
+                .isEqualTo(Money.of(7_500L, Currency.JPY));
+        assertThat(walletRepository.findById(target.id()).orElseThrow().balance())
+                .isEqualTo(Money.of(2_500L, Currency.JPY));
+    }
+
+    private static ResponseEntity<TransferResponse> postTransfer(
+            RestClient restClient, String idempotencyKey, TransferRequest body
+    ) {
+        return restClient.post()
+                .uri("/api/transfers")
+                .header("X-API-Version", "1.0")
+                .header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .toEntity(TransferResponse.class);
     }
 
     @Test

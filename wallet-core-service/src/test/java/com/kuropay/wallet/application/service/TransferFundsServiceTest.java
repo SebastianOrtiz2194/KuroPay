@@ -5,8 +5,11 @@ import com.kuropay.wallet.application.port.in.TransferFundsUseCase.TransferResul
 import com.kuropay.wallet.domain.event.FundsTransferredEvent;
 import com.kuropay.wallet.domain.model.Currency;
 import com.kuropay.wallet.domain.model.Money;
+import com.kuropay.wallet.domain.model.Transfer;
+import com.kuropay.wallet.domain.model.TransferStatus;
 import com.kuropay.wallet.domain.model.Wallet;
 import com.kuropay.wallet.domain.port.out.OutboxEventPort;
+import com.kuropay.wallet.domain.port.out.TransferRepositoryPort;
 import com.kuropay.wallet.domain.port.out.WalletRepositoryPort;
 import java.time.Clock;
 import java.time.Instant;
@@ -37,6 +40,9 @@ class TransferFundsServiceTest {
     private WalletRepositoryPort walletRepository;
 
     @Mock
+    private TransferRepositoryPort transferRepository;
+
+    @Mock
     private OutboxEventPort outboxEventPort;
 
     private TransferFundsService transferFundsService;
@@ -44,7 +50,7 @@ class TransferFundsServiceTest {
     @BeforeEach
     void setUp() {
         Clock fixedClock = Clock.fixed(FIXED_NOW, ZoneOffset.UTC);
-        transferFundsService = new TransferFundsService(walletRepository, outboxEventPort, fixedClock);
+        transferFundsService = new TransferFundsService(walletRepository, transferRepository, outboxEventPort, fixedClock);
     }
 
     @Test
@@ -117,5 +123,53 @@ class TransferFundsServiceTest {
         ));
         verify(walletRepository, never()).save(any());
         verify(outboxEventPort, never()).publish(any());
+
+        ArgumentCaptor<Transfer> transferCaptor = ArgumentCaptor.forClass(Transfer.class);
+        verify(transferRepository).insert(transferCaptor.capture());
+        assertThat(transferCaptor.getValue().status()).isEqualTo(TransferStatus.REJECTED_INSUFFICIENT_FUNDS);
+        assertThat(transferCaptor.getValue().idempotencyKey()).isEqualTo("idem-key-002");
+    }
+
+    @Test
+    void should_replay_stored_transfer_without_moving_money_when_idempotency_key_was_already_used() {
+        UUID sourceId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID targetId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+
+        // Balances as they are now, after the original transfer already ran.
+        Wallet sourceWallet = new Wallet(
+                sourceId, "user-source", Money.of(7_000L, Currency.JPY), 1L, FIXED_NOW, FIXED_NOW
+        );
+        Wallet targetWallet = new Wallet(
+                targetId, "user-target", Money.of(3_000L, Currency.JPY), 1L, FIXED_NOW, FIXED_NOW
+        );
+        when(walletRepository.findByIdForUpdate(sourceId)).thenReturn(Optional.of(sourceWallet));
+        when(walletRepository.findByIdForUpdate(targetId)).thenReturn(Optional.of(targetWallet));
+
+        Instant originalTime = FIXED_NOW.minusSeconds(30);
+        Transfer original = new Transfer(
+                UUID.randomUUID(), "idem-key-003", sourceId, targetId,
+                Money.of(3_000L, Currency.JPY), TransferStatus.COMPLETED,
+                Money.of(7_000L, Currency.JPY), originalTime
+        );
+        when(transferRepository.findByIdempotencyKey("idem-key-003")).thenReturn(Optional.of(original));
+
+        TransferResult result = transferFundsService.transfer(new TransferCommand(
+                sourceId, targetId, Money.of(3_000L, Currency.JPY), "idem-key-003"
+        ));
+
+        assertThat(result).isEqualTo(new TransferResult.Completed(
+                original.id(), sourceId, targetId,
+                Money.of(3_000L, Currency.JPY), Money.of(7_000L, Currency.JPY), originalTime
+        ));
+        assertThat(sourceWallet.balance()).isEqualTo(Money.of(7_000L, Currency.JPY));
+        verify(walletRepository, never()).save(any());
+        verify(transferRepository, never()).insert(any());
+        verify(outboxEventPort, never()).publish(any());
+
+        // The key must be checked only once the wallet locks are held (see TransferFundsService).
+        InOrder order = inOrder(walletRepository, transferRepository);
+        order.verify(walletRepository).findByIdForUpdate(sourceId);
+        order.verify(walletRepository).findByIdForUpdate(targetId);
+        order.verify(transferRepository).findByIdempotencyKey("idem-key-003");
     }
 }
