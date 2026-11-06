@@ -3,6 +3,7 @@ package com.kuropay.wallet.application.service;
 import com.kuropay.wallet.application.port.in.TransferFundsUseCase.TransferCommand;
 import com.kuropay.wallet.application.port.in.TransferFundsUseCase.TransferResult;
 import com.kuropay.wallet.domain.event.FundsTransferredEvent;
+import com.kuropay.wallet.domain.exception.DuplicateIdempotencyKeyException;
 import com.kuropay.wallet.domain.model.Currency;
 import com.kuropay.wallet.domain.model.Money;
 import com.kuropay.wallet.domain.model.Transfer;
@@ -25,6 +26,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -119,7 +121,8 @@ class TransferFundsServiceTest {
         assertThat(result).isEqualTo(new TransferResult.RejectedInsufficientFunds(
                 sourceId,
                 Money.of(1_000L, Currency.JPY),
-                Money.of(2_500L, Currency.JPY)
+                Money.of(2_500L, Currency.JPY),
+                false
         ));
         verify(walletRepository, never()).save(any());
         verify(outboxEventPort, never()).publish(any());
@@ -159,7 +162,8 @@ class TransferFundsServiceTest {
 
         assertThat(result).isEqualTo(new TransferResult.Completed(
                 original.id(), sourceId, targetId,
-                Money.of(3_000L, Currency.JPY), Money.of(7_000L, Currency.JPY), originalTime
+                Money.of(3_000L, Currency.JPY), Money.of(7_000L, Currency.JPY), originalTime,
+                true
         ));
         assertThat(sourceWallet.balance()).isEqualTo(Money.of(7_000L, Currency.JPY));
         verify(walletRepository, never()).save(any());
@@ -171,5 +175,39 @@ class TransferFundsServiceTest {
         order.verify(walletRepository).findByIdForUpdate(sourceId);
         order.verify(walletRepository).findByIdForUpdate(targetId);
         order.verify(transferRepository).findByIdempotencyKey("idem-key-003");
+    }
+
+    @Test
+    void should_reject_reused_idempotency_key_when_the_request_differs_from_the_stored_one() {
+        UUID sourceId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID targetId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+
+        Wallet sourceWallet = new Wallet(
+                sourceId, "user-source", Money.of(7_000L, Currency.JPY), 1L, FIXED_NOW, FIXED_NOW
+        );
+        Wallet targetWallet = new Wallet(
+                targetId, "user-target", Money.of(3_000L, Currency.JPY), 1L, FIXED_NOW, FIXED_NOW
+        );
+        when(walletRepository.findByIdForUpdate(sourceId)).thenReturn(Optional.of(sourceWallet));
+        when(walletRepository.findByIdForUpdate(targetId)).thenReturn(Optional.of(targetWallet));
+
+        Transfer original = new Transfer(
+                UUID.randomUUID(), "idem-key-004", sourceId, targetId,
+                Money.of(3_000L, Currency.JPY), TransferStatus.COMPLETED,
+                Money.of(7_000L, Currency.JPY), FIXED_NOW
+        );
+        when(transferRepository.findByIdempotencyKey("idem-key-004")).thenReturn(Optional.of(original));
+
+        // Same key, different amount: a client bug that must not be answered with the old result.
+        TransferCommand differentAmount = new TransferCommand(
+                sourceId, targetId, Money.of(5_000L, Currency.JPY), "idem-key-004"
+        );
+
+        assertThatThrownBy(() -> transferFundsService.transfer(differentAmount))
+                .isInstanceOf(DuplicateIdempotencyKeyException.class);
+        assertThat(sourceWallet.balance()).isEqualTo(Money.of(7_000L, Currency.JPY));
+        verify(walletRepository, never()).save(any());
+        verify(transferRepository, never()).insert(any());
+        verify(outboxEventPort, never()).publish(any());
     }
 }

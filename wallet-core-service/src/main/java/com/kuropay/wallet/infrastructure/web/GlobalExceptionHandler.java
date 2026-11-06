@@ -2,7 +2,6 @@ package com.kuropay.wallet.infrastructure.web;
 
 import com.kuropay.wallet.domain.exception.DuplicateIdempotencyKeyException;
 import com.kuropay.wallet.domain.exception.WalletNotFoundException;
-import com.kuropay.wallet.infrastructure.idempotency.IdempotencyConflictException;
 import java.net.URI;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -21,20 +20,12 @@ public class GlobalExceptionHandler {
         return problem;
     }
 
-    @ExceptionHandler(IdempotencyConflictException.class)
-    public ProblemDetail handleIdempotencyConflict(IdempotencyConflictException ex) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
-        problem.setTitle("Idempotency Conflict");
-        problem.setType(URI.create("https://api.kuropay.com/errors/idempotency-conflict"));
-        problem.setProperty("idempotencyKey", ex.idempotencyKey());
-        return problem;
-    }
-
     @ExceptionHandler(DuplicateIdempotencyKeyException.class)
     public ProblemDetail handleDuplicateIdempotencyKey(DuplicateIdempotencyKeyException ex) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
-        problem.setTitle("Idempotency Key Already Used");
-        problem.setType(URI.create("https://api.kuropay.com/errors/idempotency-key-already-used"));
+        // 422 per the IETF Idempotency-Key draft: the key was reused with a different payload.
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_CONTENT, ex.getMessage());
+        problem.setTitle("Idempotency Key Reused");
+        problem.setType(URI.create("https://api.kuropay.com/errors/idempotency-key-reused"));
         problem.setProperty("idempotencyKey", ex.idempotencyKey());
         return problem;
     }

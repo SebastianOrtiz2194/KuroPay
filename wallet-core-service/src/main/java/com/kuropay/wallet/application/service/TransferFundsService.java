@@ -2,6 +2,7 @@ package com.kuropay.wallet.application.service;
 
 import com.kuropay.wallet.application.port.in.TransferFundsUseCase;
 import com.kuropay.wallet.domain.event.FundsTransferredEvent;
+import com.kuropay.wallet.domain.exception.DuplicateIdempotencyKeyException;
 import com.kuropay.wallet.domain.exception.InsufficientFundsException;
 import com.kuropay.wallet.domain.exception.WalletNotFoundException;
 import com.kuropay.wallet.domain.model.Transfer;
@@ -47,7 +48,11 @@ public class TransferFundsService implements TransferFundsUseCase {
         // READ COMMITTED isolation this query then sees the committed transfer and we replay it.
         Optional<Transfer> previous = transferRepository.findByIdempotencyKey(command.idempotencyKey());
         if (previous.isPresent()) {
-            return toResult(previous.get());
+            Transfer stored = previous.get();
+            if (!stored.isSameRequestAs(command.sourceWalletId(), command.targetWalletId(), command.amount())) {
+                throw new DuplicateIdempotencyKeyException(command.idempotencyKey());
+            }
+            return toResult(stored, true);
         }
 
         // PostgreSQL stores microseconds; truncating keeps the fresh and replayed responses identical.
@@ -62,7 +67,7 @@ public class TransferFundsService implements TransferFundsUseCase {
                     command.idempotencyKey(), source, target, command.amount(), now
             );
             transferRepository.insert(rejected);
-            return toResult(rejected);
+            return toResult(rejected, false);
         }
         target.credit(command.amount(), now);
 
@@ -82,7 +87,7 @@ public class TransferFundsService implements TransferFundsUseCase {
                 completed.createdAt()
         ));
 
-        return toResult(completed);
+        return toResult(completed, false);
     }
 
     /** Always locks the lower UUID first so two opposite transfers can never deadlock. */
@@ -100,7 +105,7 @@ public class TransferFundsService implements TransferFundsUseCase {
     }
 
     /** Single mapping used for both fresh and replayed transfers, so both responses are identical. */
-    private static TransferResult toResult(Transfer transfer) {
+    private static TransferResult toResult(Transfer transfer, boolean replayed) {
         return switch (transfer.status()) {
             case COMPLETED -> new TransferResult.Completed(
                     transfer.id(),
@@ -108,12 +113,14 @@ public class TransferFundsService implements TransferFundsUseCase {
                     transfer.targetWalletId(),
                     transfer.amount(),
                     transfer.sourceBalanceAfter(),
-                    transfer.createdAt()
+                    transfer.createdAt(),
+                    replayed
             );
             case REJECTED_INSUFFICIENT_FUNDS -> new TransferResult.RejectedInsufficientFunds(
                     transfer.sourceWalletId(),
                     transfer.sourceBalanceAfter(),
-                    transfer.amount()
+                    transfer.amount(),
+                    replayed
             );
         };
     }

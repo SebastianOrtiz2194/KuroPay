@@ -42,6 +42,16 @@ public record Transfer(
         Objects.requireNonNull(createdAt, "createdAt must not be null");
     }
 
+    /**
+     * An idempotency key identifies one specific request. Reusing it for a different request
+     * (other wallets or amount) is a client bug that must be rejected, not silently replayed.
+     */
+    public boolean isSameRequestAs(UUID sourceWalletId, UUID targetWalletId, Money amount) {
+        return this.sourceWalletId.equals(sourceWalletId)
+                && this.targetWalletId.equals(targetWalletId)
+                && this.amount.equals(amount);
+    }
+
     /** Must be called after {@code source} has been debited. */
     public static Transfer completed(
             String idempotencyKey, Wallet source, Wallet target, Money amount, Instant now

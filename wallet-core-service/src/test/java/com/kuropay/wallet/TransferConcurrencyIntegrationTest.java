@@ -160,12 +160,18 @@ class TransferConcurrencyIntegrationTest {
         }
 
         List<UUID> transferIds = new ArrayList<>();
+        long freshExecutions = 0;
         for (Future<TransferResult> future : futures) {
             assertThat(future.get()).isInstanceOf(TransferResult.Completed.class);
-            transferIds.add(((TransferResult.Completed) future.get()).transferId());
+            TransferResult.Completed completed = (TransferResult.Completed) future.get();
+            transferIds.add(completed.transferId());
+            if (!completed.replayed()) {
+                freshExecutions++;
+            }
         }
 
         assertThat(transferIds).as("every retry must replay the same transfer").containsOnly(transferIds.getFirst());
+        assertThat(freshExecutions).as("exactly one request really executed").isEqualTo(1L);
         assertThat(walletRepository.findById(source.id()).orElseThrow().balance())
                 .isEqualTo(Money.of(9_000L, Currency.JPY));
         assertThat(walletRepository.findById(target.id()).orElseThrow().balance())

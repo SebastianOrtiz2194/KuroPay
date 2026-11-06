@@ -39,8 +39,14 @@ public interface TransferFundsUseCase {
     /** Matches the transfers.idempotency_key column size. */
     int MAX_IDEMPOTENCY_KEY_LENGTH = 255;
 
+    /**
+     * {@code replayed} is true when the result comes from a previously stored transfer with the
+     * same idempotency key instead of a fresh execution.
+     */
     sealed interface TransferResult
             permits TransferResult.Completed, TransferResult.RejectedInsufficientFunds {
+
+        boolean replayed();
 
         record Completed(
                 UUID transferId,
@@ -48,14 +54,16 @@ public interface TransferFundsUseCase {
                 UUID targetWalletId,
                 Money transferredAmount,
                 Money sourceNewBalance,
-                Instant completedAt
+                Instant completedAt,
+                boolean replayed
         ) implements TransferResult {
         }
 
         record RejectedInsufficientFunds(
                 UUID sourceWalletId,
                 Money availableBalance,
-                Money requestedAmount
+                Money requestedAmount,
+                boolean replayed
         ) implements TransferResult {
         }
     }
