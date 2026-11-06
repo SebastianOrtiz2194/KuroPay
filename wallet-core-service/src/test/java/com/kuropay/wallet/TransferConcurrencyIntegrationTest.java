@@ -46,8 +46,29 @@ class TransferConcurrencyIntegrationTest {
     private SpringDataOutboxRepository outboxRepository;
 
     @BeforeEach
-    void cleanOutbox() {
+    void warmUpAndCleanOutbox() {
+        warmUpTransferPathOnASingleThread();
         outboxRepository.deleteAll();
+    }
+
+    /**
+     * Spring Data and Hibernate initialize some classes lazily on first use. If that first use
+     * happens on many virtual threads at once, a thread blocked inside a class initializer pins
+     * its carrier, the other carriers block waiting for that same initializer, and the lock owner
+     * never gets a carrier back: the JVM deadlocks (JEP 491 fixed pinning for synchronized, not
+     * for class initialization). One sequential transfer initializes everything beforehand.
+     */
+    private void warmUpTransferPathOnASingleThread() {
+        Instant now = Instant.now();
+        Wallet source = Wallet.createNew("user-warm-up-source", Currency.JPY, now);
+        source.credit(Money.of(1L, Currency.JPY), now);
+        walletRepository.save(source);
+        Wallet target = Wallet.createNew("user-warm-up-target", Currency.JPY, now);
+        walletRepository.save(target);
+
+        transferFundsUseCase.transfer(new TransferCommand(
+                source.id(), target.id(), Money.of(1L, Currency.JPY), "warm-up-" + UUID.randomUUID()
+        ));
     }
 
     @Test
