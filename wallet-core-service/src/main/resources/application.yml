@@ -4,6 +4,12 @@ spring:
   threads:
     virtual:
       enabled: true
+  data:
+    redis:
+      # Redis is only a cache in front of the database-enforced idempotency, so it must fail fast:
+      # Lettuce's default 60s command timeout would turn a Redis outage into a 60s payment latency.
+      timeout: 200ms
+      connect-timeout: 500ms
   jpa:
     open-in-view: false
     hibernate:

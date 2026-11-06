@@ -8,6 +8,7 @@ import com.kuropay.wallet.infrastructure.web.TransferController.TransferRequest;
 import com.kuropay.wallet.infrastructure.web.TransferController.TransferResponse;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -142,11 +143,67 @@ class TransferApiIdempotencyIntegrationTest {
 
         assertThat(retry.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(retry.getBody()).isEqualTo(firstCall.getBody());
+        // Redis knew nothing, but the use case replayed from the transfers table and says so.
+        assertThat(retry.getHeaders().getFirst("X-Idempotent-Replayed")).isEqualTo("true");
 
         assertThat(walletRepository.findById(source.id()).orElseThrow().balance())
                 .isEqualTo(Money.of(7_500L, Currency.JPY));
         assertThat(walletRepository.findById(target.id()).orElseThrow().balance())
                 .isEqualTo(Money.of(2_500L, Currency.JPY));
+    }
+
+    @Test
+    void reusing_an_idempotency_key_with_a_different_payload_should_return_422_from_both_cache_and_database() {
+        Instant now = Instant.now();
+        Wallet source = Wallet.createNew("user-key-reuse-source", Currency.JPY, now);
+        source.credit(Money.of(10_000L, Currency.JPY), now);
+        walletRepository.save(source);
+
+        Wallet target = Wallet.createNew("user-key-reuse-target", Currency.JPY, now);
+        walletRepository.save(target);
+
+        RestClient restClient = RestClient.builder()
+                .baseUrl("http://localhost:" + port)
+                .build();
+        String idempotencyKey = "idem-key-reuse-001";
+
+        postTransfer(restClient, idempotencyKey,
+                new TransferRequest(source.id(), target.id(), BigDecimal.valueOf(1_000L), Currency.JPY));
+
+        TransferRequest differentAmount =
+                new TransferRequest(source.id(), target.id(), BigDecimal.valueOf(9_000L), Currency.JPY);
+
+        // 1) Rejected by the Redis fingerprint check.
+        ResponseEntity<ProblemDetail> fromCache = postExpectingProblem(restClient, idempotencyKey, differentAmount);
+
+        // 2) Rejected by comparing against the stored transfer row once Redis has lost the entry.
+        redisTemplate.execute((RedisCallback<Object>) connection -> {
+            connection.serverCommands().flushAll();
+            return null;
+        });
+        ResponseEntity<ProblemDetail> fromDatabase = postExpectingProblem(restClient, idempotencyKey, differentAmount);
+
+        for (ResponseEntity<ProblemDetail> response : List.of(fromCache, fromDatabase)) {
+            assertThat(response.getStatusCode().value()).isEqualTo(422);
+            assertThat(response.getBody()).isNotNull();
+            assertThat(response.getBody().getTitle()).isEqualTo("Idempotency Key Reused");
+        }
+        assertThat(walletRepository.findById(source.id()).orElseThrow().balance())
+                .isEqualTo(Money.of(9_000L, Currency.JPY));
+    }
+
+    private static ResponseEntity<ProblemDetail> postExpectingProblem(
+            RestClient restClient, String idempotencyKey, TransferRequest body
+    ) {
+        return restClient.post()
+                .uri("/api/transfers")
+                .header("X-API-Version", "1.0")
+                .header("Idempotency-Key", idempotencyKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .onStatus(status -> status.value() == 422, (req, res) -> {})
+                .toEntity(ProblemDetail.class);
     }
 
     private static ResponseEntity<TransferResponse> postTransfer(
