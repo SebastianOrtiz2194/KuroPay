@@ -1,5 +1,6 @@
 package com.kuropay.wallet.application.port.in;
 
+import com.kuropay.wallet.domain.exception.DomainValidationException;
 import com.kuropay.wallet.domain.model.Money;
 import java.time.Instant;
 import java.util.Objects;
@@ -19,17 +20,17 @@ public interface TransferFundsUseCase {
             Objects.requireNonNull(sourceWalletId, "sourceWalletId must not be null");
             Objects.requireNonNull(targetWalletId, "targetWalletId must not be null");
             if (sourceWalletId.equals(targetWalletId)) {
-                throw new IllegalArgumentException("Cannot transfer funds to the same wallet");
+                throw new DomainValidationException("Cannot transfer funds to the same wallet");
             }
             Objects.requireNonNull(amount, "amount must not be null");
             if (!amount.isPositive()) {
-                throw new IllegalArgumentException("Transfer amount must be positive");
+                throw new DomainValidationException("Transfer amount must be positive");
             }
             if (idempotencyKey == null || idempotencyKey.isBlank()) {
-                throw new IllegalArgumentException("idempotencyKey must not be blank");
+                throw new DomainValidationException("idempotencyKey must not be blank");
             }
             if (idempotencyKey.length() > MAX_IDEMPOTENCY_KEY_LENGTH) {
-                throw new IllegalArgumentException(
+                throw new DomainValidationException(
                         "idempotencyKey must be at most %d characters".formatted(MAX_IDEMPOTENCY_KEY_LENGTH)
                 );
             }

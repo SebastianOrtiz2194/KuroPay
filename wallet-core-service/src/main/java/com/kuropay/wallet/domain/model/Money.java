@@ -1,5 +1,7 @@
 package com.kuropay.wallet.domain.model;
 
+import com.kuropay.wallet.domain.exception.CurrencyMismatchException;
+import com.kuropay.wallet.domain.exception.DomainValidationException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Objects;
@@ -12,7 +14,7 @@ public record Money(BigDecimal amount, Currency currency) {
         try {
             amount = amount.setScale(currency.fractionDigits(), RoundingMode.UNNECESSARY);
         } catch (ArithmeticException ex) {
-            throw new IllegalArgumentException(
+            throw new DomainValidationException(
                     "Amount %s exceeds allowed decimal places (%d) for currency %s"
                             .formatted(amount.toPlainString(), currency.fractionDigits(), currency),
                     ex
@@ -58,9 +60,7 @@ public record Money(BigDecimal amount, Currency currency) {
     public void requireSameCurrency(Money other) {
         Objects.requireNonNull(other, "other money must not be null");
         if (this.currency != other.currency) {
-            throw new IllegalArgumentException(
-                    "Currency mismatch: cannot operate between %s and %s".formatted(this.currency, other.currency)
-            );
+            throw new CurrencyMismatchException(this.currency, other.currency);
         }
     }
 }
