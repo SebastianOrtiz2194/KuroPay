@@ -12,6 +12,8 @@ import com.kuropay.wallet.infrastructure.idempotency.RequestFingerprint;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.net.URI;
 import java.time.Instant;
@@ -45,7 +47,8 @@ public class TransferController {
 
     @PostMapping(version = "1.0")
     public ResponseEntity<?> createTransfer(
-            @RequestHeader("Idempotency-Key") @NotBlank String idempotencyKey,
+            @RequestHeader("Idempotency-Key") @NotBlank @Size(max = TransferFundsUseCase.MAX_IDEMPOTENCY_KEY_LENGTH)
+            String idempotencyKey,
             @Valid @RequestBody TransferRequest request
     ) {
         TransferCommand command = new TransferCommand(
@@ -141,7 +144,7 @@ public class TransferController {
     public record TransferRequest(
             @NotNull UUID sourceWalletId,
             @NotNull UUID targetWalletId,
-            @NotNull BigDecimal amount,
+            @NotNull @Positive BigDecimal amount,
             @NotNull Currency currency
     ) {
     }
