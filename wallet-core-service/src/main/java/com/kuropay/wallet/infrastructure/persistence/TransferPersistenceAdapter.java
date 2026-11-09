@@ -7,7 +7,6 @@ import com.kuropay.wallet.domain.model.Transfer;
 import com.kuropay.wallet.domain.model.TransferStatus;
 import com.kuropay.wallet.domain.port.out.TransferRepositoryPort;
 import java.util.Optional;
-import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
 
@@ -34,21 +33,11 @@ public class TransferPersistenceAdapter implements TransferRepositoryPort {
             // instead of later at commit time outside the adapter.
             repository.saveAndFlush(toEntity(transfer));
         } catch (DataIntegrityViolationException ex) {
-            if (violatesConstraint(ex, IDEMPOTENCY_KEY_CONSTRAINT)) {
+            if (ConstraintViolations.isViolationOf(ex, IDEMPOTENCY_KEY_CONSTRAINT)) {
                 throw new DuplicateIdempotencyKeyException(transfer.idempotencyKey());
             }
             throw ex;
         }
-    }
-
-    private static boolean violatesConstraint(Throwable error, String constraintName) {
-        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
-            if (cause instanceof ConstraintViolationException violation
-                    && constraintName.equalsIgnoreCase(violation.getConstraintName())) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static TransferJpaEntity toEntity(Transfer transfer) {
