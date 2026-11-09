@@ -13,4 +13,6 @@ public interface SpringDataWalletRepository extends JpaRepository<WalletJpaEntit
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT w FROM WalletJpaEntity w WHERE w.id = :id")
     Optional<WalletJpaEntity> findByIdForUpdate(@Param("id") UUID id);
+
+    Optional<WalletJpaEntity> findByOwnerIdAndCurrency(String ownerId, String currency);
 }

@@ -56,8 +56,8 @@ class TransferPersistenceAdapterIntegrationTest {
 
     private Transfer newTransfer(String idempotencyKey) {
         Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
-        Wallet source = Wallet.createNew("user-adapter-source", Currency.JPY, now);
-        Wallet target = Wallet.createNew("user-adapter-target", Currency.JPY, now);
+        Wallet source = Wallet.createNew("user-adapter-source-" + UUID.randomUUID(), Currency.JPY, now);
+        Wallet target = Wallet.createNew("user-adapter-target-" + UUID.randomUUID(), Currency.JPY, now);
         walletRepository.save(source);
         walletRepository.save(target);
 

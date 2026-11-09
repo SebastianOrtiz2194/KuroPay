@@ -60,10 +60,10 @@ class TransferConcurrencyIntegrationTest {
      */
     private void warmUpTransferPathOnASingleThread() {
         Instant now = Instant.now();
-        Wallet source = Wallet.createNew("user-warm-up-source", Currency.JPY, now);
+        Wallet source = Wallet.createNew("user-warm-up-source-" + UUID.randomUUID(), Currency.JPY, now);
         source.credit(Money.of(1L, Currency.JPY), now);
         walletRepository.save(source);
-        Wallet target = Wallet.createNew("user-warm-up-target", Currency.JPY, now);
+        Wallet target = Wallet.createNew("user-warm-up-target-" + UUID.randomUUID(), Currency.JPY, now);
         walletRepository.save(target);
 
         transferFundsUseCase.transfer(new TransferCommand(

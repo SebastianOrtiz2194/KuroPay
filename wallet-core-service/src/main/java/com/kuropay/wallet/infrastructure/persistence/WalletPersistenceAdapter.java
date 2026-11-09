@@ -1,15 +1,19 @@
 package com.kuropay.wallet.infrastructure.persistence;
 
+import com.kuropay.wallet.domain.exception.DuplicateWalletException;
 import com.kuropay.wallet.domain.model.Currency;
 import com.kuropay.wallet.domain.model.Money;
 import com.kuropay.wallet.domain.model.Wallet;
 import com.kuropay.wallet.domain.port.out.WalletRepositoryPort;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Repository;
 
 @Repository
 public class WalletPersistenceAdapter implements WalletRepositoryPort {
+
+    static final String OWNER_CURRENCY_CONSTRAINT = "uk_wallets_owner_currency";
 
     private final SpringDataWalletRepository repository;
 
@@ -25,6 +29,11 @@ public class WalletPersistenceAdapter implements WalletRepositoryPort {
     @Override
     public Optional<Wallet> findByIdForUpdate(UUID walletId) {
         return repository.findByIdForUpdate(walletId).map(this::toDomain);
+    }
+
+    @Override
+    public Optional<Wallet> findByOwnerIdAndCurrency(String ownerId, Currency currency) {
+        return repository.findByOwnerIdAndCurrency(ownerId, currency.name()).map(this::toDomain);
     }
 
     @Override
@@ -45,8 +54,15 @@ public class WalletPersistenceAdapter implements WalletRepositoryPort {
                         wallet.updatedAt()
                 ));
 
-        WalletJpaEntity saved = repository.saveAndFlush(entity);
-        return toDomain(saved);
+        try {
+            WalletJpaEntity saved = repository.saveAndFlush(entity);
+            return toDomain(saved);
+        } catch (DataIntegrityViolationException ex) {
+            if (ConstraintViolations.isViolationOf(ex, OWNER_CURRENCY_CONSTRAINT)) {
+                throw new DuplicateWalletException(wallet.ownerId(), wallet.currency());
+            }
+            throw ex;
+        }
     }
 
     private Wallet toDomain(WalletJpaEntity entity) {
