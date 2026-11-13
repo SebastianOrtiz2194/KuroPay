@@ -13,7 +13,7 @@ public record FundsTransferredEvent(
         Money amount,
         String idempotencyKey,
         Instant occurredAt
-) {
+) implements WalletEvent {
     public FundsTransferredEvent {
         Objects.requireNonNull(eventId, "eventId must not be null");
         Objects.requireNonNull(transferId, "transferId must not be null");
