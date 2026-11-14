@@ -6,6 +6,7 @@ import com.kuropay.wallet.application.port.in.TransferFundsUseCase.TransferResul
 import com.kuropay.wallet.domain.model.Currency;
 import com.kuropay.wallet.domain.model.Money;
 import com.kuropay.wallet.domain.exception.DuplicateIdempotencyKeyException;
+import com.kuropay.wallet.infrastructure.idempotency.IdempotentOperation;
 import com.kuropay.wallet.infrastructure.idempotency.RedisIdempotencyCache;
 import com.kuropay.wallet.infrastructure.idempotency.RedisIdempotencyCache.CachedResponse;
 import com.kuropay.wallet.infrastructure.idempotency.RequestFingerprint;
@@ -61,7 +62,7 @@ public class TransferController {
 
         // Fast path: a retry answered from Redis never touches the database or its row locks.
         Optional<CachedResponse<CachedTransferOutcome>> cached =
-                idempotencyCache.find(idempotencyKey, CachedTransferOutcome.class);
+                idempotencyCache.find(IdempotentOperation.TRANSFER, idempotencyKey, CachedTransferOutcome.class);
         if (cached.isPresent()) {
             if (!cached.get().requestFingerprint().equals(fingerprint)) {
                 throw new DuplicateIdempotencyKeyException(idempotencyKey);
@@ -72,7 +73,7 @@ public class TransferController {
         // Slow path: the use case is the real guarantee (it replays from the transfers table).
         TransferResult result = transferFundsUseCase.transfer(command);
         CachedTransferOutcome outcome = toOutcome(result);
-        idempotencyCache.store(idempotencyKey, fingerprint, outcome);
+        idempotencyCache.store(IdempotentOperation.TRANSFER, idempotencyKey, fingerprint, outcome);
         return toResponseEntity(outcome, result.replayed());
     }
 

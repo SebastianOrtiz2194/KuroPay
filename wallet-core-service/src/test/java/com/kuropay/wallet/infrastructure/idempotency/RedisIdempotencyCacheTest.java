@@ -26,7 +26,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class RedisIdempotencyCacheTest {
 
-    private static final String REDIS_KEY = "kuropay:idempotency:idem-001";
+    private static final String REDIS_KEY = "kuropay:idempotency:transfer:idem-001";
 
     @Mock
     private StringRedisTemplate redisTemplate;
@@ -46,21 +46,34 @@ class RedisIdempotencyCacheTest {
     void stored_response_should_be_read_back_with_its_request_fingerprint() {
         SampleResponse response = new SampleResponse("transfer-1", new BigDecimal("2500"));
 
-        cache.store("idem-001", "fingerprint-abc", response);
+        cache.store(IdempotentOperation.TRANSFER, "idem-001", "fingerprint-abc", response);
 
         ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
         verify(valueOperations).set(eq(REDIS_KEY), json.capture(), eq(Duration.ofHours(24)));
         when(valueOperations.get(REDIS_KEY)).thenReturn(json.getValue());
 
-        assertThat(cache.find("idem-001", SampleResponse.class))
+        assertThat(cache.find(IdempotentOperation.TRANSFER, "idem-001", SampleResponse.class))
                 .contains(new CachedResponse<>("fingerprint-abc", response));
+    }
+
+    @Test
+    void the_same_idempotency_key_should_use_a_different_redis_key_per_operation() {
+        SampleResponse response = new SampleResponse("deposit-1", new BigDecimal("1000"));
+
+        cache.store(IdempotentOperation.DEPOSIT, "idem-001", "fingerprint-abc", response);
+        cache.find(IdempotentOperation.DEPOSIT, "idem-001", SampleResponse.class);
+
+        String depositKey = "kuropay:idempotency:deposit:idem-001";
+        assertThat(depositKey).isNotEqualTo(REDIS_KEY);
+        verify(valueOperations).set(eq(depositKey), anyString(), eq(Duration.ofHours(24)));
+        verify(valueOperations).get(depositKey);
     }
 
     @Test
     void redis_outage_on_read_should_be_treated_as_a_cache_miss() {
         when(valueOperations.get(anyString())).thenThrow(new RedisConnectionFailureException("Redis down"));
 
-        assertThat(cache.find("idem-001", SampleResponse.class)).isEmpty();
+        assertThat(cache.find(IdempotentOperation.TRANSFER, "idem-001", SampleResponse.class)).isEmpty();
     }
 
     @Test
@@ -68,7 +81,7 @@ class RedisIdempotencyCacheTest {
         doThrow(new RedisConnectionFailureException("Redis down"))
                 .when(valueOperations).set(anyString(), anyString(), any(Duration.class));
 
-        assertThatCode(() -> cache.store("idem-001", "fingerprint-abc", new SampleResponse("t", BigDecimal.ONE)))
+        assertThatCode(() -> cache.store(IdempotentOperation.TRANSFER, "idem-001", "fingerprint-abc", new SampleResponse("t", BigDecimal.ONE)))
                 .doesNotThrowAnyException();
     }
 
@@ -76,7 +89,7 @@ class RedisIdempotencyCacheTest {
     void corrupt_cache_entry_should_be_treated_as_a_cache_miss() {
         when(valueOperations.get(REDIS_KEY)).thenReturn("{not valid json");
 
-        assertThat(cache.find("idem-001", SampleResponse.class)).isEmpty();
+        assertThat(cache.find(IdempotentOperation.TRANSFER, "idem-001", SampleResponse.class)).isEmpty();
     }
 
     record SampleResponse(String transferId, BigDecimal amount) {
